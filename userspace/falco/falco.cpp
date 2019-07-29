@@ -1026,7 +1026,7 @@ int falco_init(int argc, char **argv)
 				{
 					falco_logger::log(LOG_ERR, "Unable to load the driver. Exiting.\n");
 				}
-				inspector->open();
+				rethrow_exception(current_exception());
 			}
 		}
 
