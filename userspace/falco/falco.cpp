@@ -55,6 +55,17 @@ bool g_reopen_outputs = false;
 bool g_restart = false;
 bool g_daemonized = false;
 
+#if TRACE_FALCO || TRACE_FALCO_RULES
+#include "../falco-plugin/tracer_interface.h"
+
+falco_engine *engine = NULL;
+
+void send_rules_names_wrapper(int signum)
+{
+	engine->send_rules_names_engine();
+}
+#endif
+
 //
 // Helper functions
 //
@@ -259,9 +270,30 @@ uint64_t do_inspect(falco_engine *engine,
 	while(1)
 	{
 
+	#ifdef TRACE_FALCO
+		reset_last_counter();
+		set_func_start(ANALYSIS_CYCLE);
+	#endif
+
+	#ifdef TRACE_FALCO
+		set_func_start(SINSP_NEXT);
+	#endif
+
 		rc = inspector->next(&ev);
+	
+	#ifdef TRACE_FALCO
+		set_func_end(SINSP_NEXT, ANALYSIS_CYCLE);
+	#endif
+
+	#ifdef TRACE_FALCO
+		set_func_start(STATS_FILE_WRITER_HANDLE);
+	#endif
 
 		writer.handle();
+
+	#ifdef TRACE_FALCO
+		set_func_end(STATS_FILE_WRITER_HANDLE, ANALYSIS_CYCLE);
+	#endif
 
 		if(g_reopen_outputs)
 		{
@@ -276,10 +308,17 @@ uint64_t do_inspect(falco_engine *engine,
 		}
 		else if(rc == SCAP_TIMEOUT)
 		{
+		#ifdef TRACE_FALCO
+			inc_counter(SCAP_TIMEOUT_CNT);
+			set_func_end_cont(ANALYSIS_CYCLE, SCAP_TIMEOUT_CNT, ROOT);
+		#endif
 			continue;
 		}
 		else if(rc == SCAP_EOF)
 		{
+		#if TRACE_FALCO || TRACE_FALCO_RULES
+			write_scap_file_stats();
+		#endif
 			break;
 		}
 		else if(rc != SCAP_SUCCESS)
@@ -303,29 +342,72 @@ uint64_t do_inspect(falco_engine *engine,
 			}
 		}
 
+	#ifdef TRACE_FALCO
+		set_func_start(SYSCALL_EVT_DROP_MGR_PROCESS_EVENT);
+	#endif
+
 		if(!sdropmgr.process_event(inspector, ev))
 		{
 			result = EXIT_FAILURE;
 			break;
 		}
 
+	#ifdef TRACE_FALCO
+		set_func_end(SYSCALL_EVT_DROP_MGR_PROCESS_EVENT, ANALYSIS_CYCLE);
+	#endif
+
+	#ifdef TRACE_FALCO
+		set_func_start(EV_FALCO_CONSIDER);
+	#endif
+
 		if(!ev->falco_consider() && !all_events)
 		{
+		#ifdef TRACE_FALCO
+			inc_counter(EVENT_NOT_CONSIDERED_CNT);
+			set_func_end_cont(EV_FALCO_CONSIDER, EVENT_NOT_CONSIDERED_CNT, ANALYSIS_CYCLE);
+			set_func_end_cont(ANALYSIS_CYCLE, CYCLE_COMPLETED_CNT, ROOT);
+		#endif
 			continue;
 		}
+	#ifdef TRACE_FALCO
+		set_func_end(EV_FALCO_CONSIDER, ANALYSIS_CYCLE);
+	#endif
 
 		// As the inspector has no filter at its level, all
 		// events are returned here. Pass them to the falco
 		// engine, which will match the event against the set
 		// of rules. If a match is found, pass the event to
 		// the outputs.
+	#ifdef TRACE_FALCO
+		set_func_start(PROCESS_SINSP_EVENT);
+	#endif
+
 		unique_ptr<falco_engine::rule_result> res = engine->process_sinsp_event(ev);
+
+	#ifdef TRACE_FALCO
+		set_func_end(PROCESS_SINSP_EVENT, ANALYSIS_CYCLE);
+	#endif
+	
 		if(res)
 		{
+		#ifdef TRACE_FALCO
+			set_func_start(FALCO_OUTPUTS_HANDLE_EVENT);
+		#endif
+
 			outputs->handle_event(res->evt, res->rule, res->source, res->priority_num, res->format);
+			
+			
+		#ifdef TRACE_FALCO
+			set_func_end(FALCO_OUTPUTS_HANDLE_EVENT, ANALYSIS_CYCLE);
+			inc_counter(CYCLE_COMPLETED_CNT);
+		#endif
 		}
 
-		num_evts++;
+	#ifdef TRACE_FALCO
+		set_func_end_cont(ANALYSIS_CYCLE, CYCLE_COMPLETED_CNT, ROOT);
+	#endif
+
+		num_evts++;	
 	}
 
 	return num_evts;
@@ -397,7 +479,11 @@ int falco_init(int argc, char **argv)
 	int result = EXIT_SUCCESS;
 	sinsp* inspector = NULL;
 	sinsp_evt::param_fmt event_buffer_format = sinsp_evt::PF_NORMAL;
+
+#if !TRACE_FALCO && !TRACE_FALCO_RULES
 	falco_engine *engine = NULL;
+#endif
+
 	falco_outputs *outputs = NULL;
 	syscall_evt_drop_mgr sdropmgr;
 	int op;
@@ -511,6 +597,11 @@ int falco_init(int argc, char **argv)
 				disabled_rule_substrings.insert(substring);
 				break;
 			case 'e':
+
+			#if TRACE_FALCO || TRACE_FALCO_RULES
+				set_analysis_type(OFFLINE_ANALYSIS);
+			#endif
+
 				trace_filename = optarg;
 				k8s_api = new string();
 				mesos_api = new string();
@@ -649,6 +740,10 @@ int falco_init(int argc, char **argv)
 			}
 
 		}
+	
+	#if TRACE_FALCO  || TRACE_FALCO_RULES
+		init_tracer();
+	#endif
 
 		inspector = new sinsp();
 		inspector->set_buffer_format(event_buffer_format);
@@ -949,6 +1044,23 @@ int falco_init(int argc, char **argv)
 			goto exit;
 		}
 
+	#if TRACE_FALCO || TRACE_FALCO_RULES
+		if(get_analysis_type() == ONLINE_ANALYSIS)
+		{
+			if(signal(SEND_RULES_NAMES, send_rules_names_wrapper) == SIG_ERR)
+			{
+				fprintf(stderr, "An error occurred while setting SEND_RULES_NAMES signal handler.\n");
+				result = EXIT_FAILURE;
+				goto exit;
+			}
+		} 
+		else
+		{
+			engine->send_rules_names_engine();
+		}	
+	#endif
+
+
 		// If daemonizing, do it here so any init errors will
 		// be returned in the foreground process.
 		if (daemon && !g_daemonized) {
@@ -1238,6 +1350,11 @@ int main(int argc, char **argv)
 		g_restart = false;
 		optind = 1;
 	}
+
+#if TRACE_FALCO || TRACE_FALCO_RULES
+	close_tracer();	
+#endif
+
 
 	return rc;
 }

@@ -40,6 +40,17 @@ target_include_directories(falco PUBLIC
 	"${CIVETWEB_INCLUDE_DIR}"
 	"${DRAIOS_DEPENDENCIES_DIR}/yaml-${DRAIOS_YAML_VERSION}/target/include")
 
+if(TRACE_FALCO)
+	add_executable(falco
+		../../../falco-plugin/tracer_interface.cpp
+		../../../falco-plugin/tracer.cpp	
+		../../../falco-plugin/tracer_common.cpp
+		../../../falco-plugin/tracer_msg_creator.cpp
+		../../../falco-plugin/tsc.cpp)
+	
+	include_directories("${PROJECT_SOURCE_DIR}/../falco-plugin")
+endif()
+
 target_link_libraries(falco falco_engine sinsp)
 target_link_libraries(falco
 	"${LIBYAML_LIB}"
