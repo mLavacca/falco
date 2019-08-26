@@ -35,6 +35,10 @@ extern "C" {
 
 #include "utils.h"
 
+#if TRACE_FALCO || TRACE_FALCO_RULES
+#include "../falco-plugin/tracer_interface.h"
+#endif
+
 
 string lua_on_event = "on_event";
 string lua_print_stats = "print_stats";
@@ -275,15 +279,44 @@ void falco_engine::syscalls_for_ruleset(std::vector<bool> &syscalls, const std::
 
 unique_ptr<falco_engine::rule_result> falco_engine::process_sinsp_event(sinsp_evt *ev, uint16_t ruleset_id)
 {
+
+#ifdef TRACE_FALCO
+	set_func_start(FALCO_ENGINE_SHOULD_DROP_EVT);
+#endif
+
 	if(should_drop_evt())
 	{
+
+	#ifdef TRACE_FALCO
+		inc_counter(EVENT_DROPPED_CNT);
+		set_func_end_cont(FALCO_ENGINE_SHOULD_DROP_EVT, EVENT_DROPPED_CNT, PROCESS_SINSP_EVENT);
+	#endif
+
 		return unique_ptr<struct rule_result>();
 	}
 
+#ifdef TRACE_FALCO
+	set_func_end(FALCO_ENGINE_SHOULD_DROP_EVT, PROCESS_SINSP_EVENT);
+#endif
+
+#ifdef TRACE_FALCO
+	set_func_start(RULESET_FILTERS_RUN);
+#endif
+
 	if(!m_sinsp_rules->run(ev, ruleset_id))
 	{
+
+	#ifdef TRACE_FALCO
+		inc_counter(RULES_NOT_BROKEN_CNT);
+		set_func_end_cont(RULESET_FILTERS_RUN, RULES_NOT_BROKEN_CNT, PROCESS_SINSP_EVENT);
+	#endif
+
 		return unique_ptr<struct rule_result>();
 	}
+
+#ifdef TRACE_FALCO
+	set_func_end(RULESET_FILTERS_RUN, PROCESS_SINSP_EVENT);
+#endif
 
 	unique_ptr<struct rule_result> res(new rule_result());
 
@@ -522,3 +555,34 @@ json_event_filter_factory &falco_engine::json_factory()
 
 	return *(m_json_factory.get());
 }
+
+#if TRACE_FALCO || TRACE_FALCO_RULES
+void falco_engine::send_rules_names_engine()
+{
+	start_rules_names_sending();
+
+	for(int i = 0; i < N_RULES; i++)
+	{
+		lua_getglobal(m_ls, lua_on_event.c_str());
+
+		if(lua_isfunction(m_ls, -1))
+		{
+			lua_pushnumber(m_ls, i);
+			if(lua_pcall(m_ls, 1, 3, 0) != 0)
+			{
+				continue;
+			}
+		
+			const char *p =  lua_tostring(m_ls, -3);
+			send_rule_name(i, p);
+			lua_pop(m_ls, 3);
+		}
+		else
+		{
+			throw falco_exception("No function " + lua_on_event + " found in lua compiler module");
+		}
+	}
+
+	end_rules_names_sending();
+}
+#endif

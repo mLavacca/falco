@@ -233,6 +233,10 @@ public:
 			      std::set<uint32_t> &syscalls,
 			      std::set<std::string> &tags,
 			      sinsp_filter* filter);
+	
+#if TRACE_FALCO || TRACE_FALCO_RULES
+	void send_rules_names_engine();
+#endif
 
 	sinsp_filter_factory &sinsp_factory();
 	json_event_filter_factory &json_factory();

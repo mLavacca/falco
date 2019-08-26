@@ -19,6 +19,10 @@ limitations under the License.
 
 #include "ruleset.h"
 
+#if TRACE_FALCO || TRACE_FALCO_RULES
+#include "../falco-plugin/tracer_interface.h"
+#endif
+
 using namespace std;
 
 falco_ruleset::falco_ruleset()
@@ -146,12 +150,31 @@ bool falco_ruleset::ruleset_filters::run(gen_event *evt, uint32_t etag)
 		return false;
 	}
 
+#ifdef TRACE_FALCO_RULES
+	set_current_tag(etag);
+#endif
+
 	for (auto &wrap : *filters)
 	{
+
+	#ifdef TRACE_FALCO_RULES
+		set_rule_start();
+	#endif
+
 		if(wrap->filter->run(evt))
 		{
+
+		#ifdef TRACE_FALCO_RULES
+			set_rule_end(true);
+		#endif
+
 			return true;
 		}
+
+	#ifdef TRACE_FALCO_RULES
+		set_rule_end(false);
+	#endif
+
 	}
 
 	return false;

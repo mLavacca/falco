@@ -26,7 +26,12 @@ set(FALCO_ENGINE_SOURCE_FILES
 	json_evt.cpp
 	ruleset.cpp
 	token_bucket.cpp
-	formats.cpp)
+	formats.cpp
+	../../../falco-plugin/tracer_interface.cpp
+	../../../falco-plugin/tracer.cpp	
+	../../../falco-plugin/tracer_common.cpp
+	../../../falco-plugin/tracer_msg_creator.cpp
+	../../../falco-plugin/tsc.cpp)
 
 add_library(falco_engine STATIC ${FALCO_ENGINE_SOURCE_FILES})
 
@@ -39,6 +44,7 @@ target_include_directories(falco_engine PUBLIC
 	"${SYSDIG_DIR}/userspace/libscap"
 	"${SYSDIG_DIR}/userspace/libsinsp"
 	"${PROJECT_BINARY_DIR}/userspace/engine"
+	"${PROJECT_SOURCE_DIR}/../falco-plugin"
 	)
 
 target_link_libraries(falco_engine
